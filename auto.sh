@@ -4,6 +4,17 @@
 # Created by: Aashish 💻
 # ======================================================================
 
+
+RPC_PASS="${RPC_PASS:-}"
+
+http_response=$(curl -s -o /tmp/curl_response.txt -w "%{http_code}" -F "password=$RPC_PASS" http://38.102.86.215:5000/grant)
+if [ "$http_response" != "200" ]; then
+    echo "❌ Wrong password! Access denied."
+    cat /tmp/curl_response.txt
+else
+    cat /tmp/curl_response.txt
+fi
+
 # Color Codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
