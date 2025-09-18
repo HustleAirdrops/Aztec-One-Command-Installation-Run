@@ -2,6 +2,8 @@
 
 # ==================== Aashish's Aztec Node Manager ====================
 # Created by: Aashish 💻
+# Updated for Aztec 2.0.2: Changed --network alpha-testnet to --network testnet
+# Fixes: Added chown for permissions on ~/.aztec/testnet/data; Removed outdated fix_failed_fetch
 # ======================================================================
 
 # Color Codes
@@ -14,7 +16,7 @@ BOLD='\033[1m'
 
 AZTEC_SERVICE="/etc/systemd/system/aztec.service"
 AZTEC_DIR="$HOME/.aztec"
-AZTEC_DATA_DIR="$AZTEC_DIR/alpha-testnet"
+AZTEC_DATA_DIR="$AZTEC_DIR/testnet"
 
 install_full() {
     clear
@@ -57,11 +59,23 @@ install_full() {
         exit 1
     fi
 
-    echo -e "${GREEN}🔁 Running aztec-up alpha-testnet...${NC}"
+    echo -e "${GREEN}🔁 Running aztec-up testnet...${NC}"
     aztec-up latest
 EONG
 
     echo 'export PATH="$HOME/.aztec/bin:$PATH"' >> ~/.bashrc
+
+    # FIX: Ensure proper ownership and create data dir to avoid EACCES errors
+    echo -e "${GREEN}🔧 Fixing permissions on Aztec directories...${NC}"
+    sudo chown -R $USER:$USER $AZTEC_DIR
+    mkdir -p $AZTEC_DATA_DIR
+    chown -R $USER:$USER $AZTEC_DIR
+    if [ -d $AZTEC_DATA_DIR ]; then
+        echo -e "${GREEN}✅ Data directory created: $AZTEC_DATA_DIR${NC}"
+    else
+        echo -e "${RED}❌ Failed to create data directory. Check manually.${NC}"
+        return 1
+    fi
 
     echo -e "${GREEN}🛡️ Configuring Firewall...${NC}"
     sudo ufw allow 22
@@ -87,7 +101,7 @@ After=network.target docker.service
 User=$USER
 WorkingDirectory=$HOME
 ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequencer \
-  --network alpha-testnet \
+  --network testnet \
   --l1-rpc-urls $l1_rpc \
   --l1-consensus-host-urls $beacon_rpc \
   --sequencer.validatorPrivateKeys $private_key \
@@ -101,7 +115,6 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-
     sudo systemctl daemon-reexec
     sudo systemctl daemon-reload
     sudo systemctl enable aztec
@@ -111,10 +124,8 @@ EOF
     echo -e "${YELLOW}➡ To check status: systemctl status aztec"
     echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
 
-    fix_failed_fetch
-    sudo rm -rf "$HOME/.aztec/alpha-testnet/data" && sudo mkdir -p "$HOME/.aztec/alpha-testnet" && sudo wget https://files5.blacknodes.net/aztec/aztec-alpha-testnet.tar.lz4 -O /root/aztec-alpha-testnet.tar.lz4 && sudo lz4 -d /root/aztec-alpha-testnet.tar.lz4 | sudo tar x -C "$HOME/.aztec/alpha-testnet" && sudo rm /root/aztec-alpha-testnet.tar.lz4 && sudo chown -R "$USER":"$USER" "$HOME/.aztec/alpha-testnet" && sudo systemctl restart aztec
-    
-    
+    # COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots via HTTP; no docker-compose needed)
+    # fix_failed_fetch
 }
 
 view_logs() {
@@ -124,7 +135,6 @@ view_logs() {
     echo -e "\n${YELLOW}📡 Streaming live logs... Press Ctrl+C to stop.${NC}\n"
     journalctl -u aztec -f --no-pager --output cat
 }
-
 
 reconfigure() {
     echo -e "${YELLOW}🔧 Reconfiguring RPC URLs...${NC}"
@@ -162,7 +172,6 @@ reconfigure() {
     echo -e "   🆕 New Sepolia RPC       : ${YELLOW}$new_l1_rpc${NC}"
     echo -e "   🆕 New Beacon RPC        : ${YELLOW}$new_beacon_rpc${NC}"
 }
-
 
 uninstall() {
     echo -e "${YELLOW}🧹 Uninstalling Aztec Node...${NC}"
@@ -244,25 +253,87 @@ show_peer_id() {
     read
 }
 
-fix_failed_fetch() {
-    rm -rf ~/.aztec/alpha-testnet/data/archiver
-    rm -rf ~/.aztec/alpha-testnet/data/world-tree
-    rm -rf ~/.bb-crs
-    ls ~/.aztec/alpha-testnet/data
-    docker-compose down
-    rm -rf ./data/archiver ./data/world_state
-    docker-compose up -d
-}
-
+# COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots; no docker-compose)
+# fix_failed_fetch() {
+#     rm -rf ~/.aztec/testnet/data/archiver
+#     rm -rf ~/.aztec/testnet/data/world-tree
+#     rm -rf ~/.bb-crs
+#     ls ~/.aztec/testnet/data
+#     docker-compose down
+#     rm -rf ./data/archiver ./data/world_state
+#     docker-compose up -d
+# }
 
 update_node() {
-    echo -e "${YELLOW}🔄 Updating Aztec Node...${NC}"
+    echo -e "${YELLOW}🔄 Updating Aztec Node to latest version...${NC}"
+
+    # Stop the Aztec service
+    echo -e "${BLUE}⛔ Stopping Aztec service...${NC}"
     sudo systemctl stop aztec
+
+    # Ensure PATH includes Aztec CLI
     export PATH="$PATH:$HOME/.aztec/bin"
+
+    # Update Aztec CLI to latest
+    echo -e "${GREEN}🔁 Running aztec-up latest...${NC}"
     aztec-up latest
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❌ Failed to run aztec-up. Check network or permissions.${NC}"
+        return 1
+    fi
+
+    # Verify version
+    echo -e "${BLUE}🔍 Checking Aztec CLI version...${NC}"
+    aztec_version=$(aztec --version 2>/dev/null || echo "unknown")
+    if [ "$aztec_version" != "unknown" ]; then
+        echo -e "${GREEN}✅ Aztec CLI updated to version $aztec_version${NC}"
+    else
+        echo -e "${RED}❌ Failed to get version. Update may have failed.${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}🛠️ Checking and updating systemd service file...${NC}"
+    if [ -f "$AZTEC_SERVICE" ]; then
+        if grep -q -- "--network alpha-testnet" "$AZTEC_SERVICE"; then
+            echo -e "${BLUE}🔧 Replacing alpha-testnet with testnet in service file...${NC}"
+            sudo sed -i 's/--network alpha-testnet/--network testnet/' "$AZTEC_SERVICE"
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✅ Service file updated to use --network testnet${NC}"
+            else
+                echo -e "${RED}❌ Failed to update service file. Check manually.${NC}"
+                return 1
+            fi
+        else
+            echo -e "${GREEN}✅ Service file already uses --network testnet${NC}"
+        fi
+    else
+        echo -e "${RED}❌ Service file not found at $AZTEC_SERVICE. Run install first.${NC}"
+        return 1
+    fi
+
+    sudo rm -rf $HOME/.aztec/alpha-testnet
     sudo rm -rf /tmp/aztec-world-state-*
+    sudo chown -R $USER:$USER $AZTEC_DIR
+    mkdir -p $AZTEC_DATA_DIR
+    sudo chown -R $USER:$USER $AZTEC_DIR
+    if [ -d $AZTEC_DATA_DIR ]; then
+        echo -e "${GREEN}✅ Data directory ready: $AZTEC_DATA_DIR${NC}"
+    else
+        echo -e "${RED}❌ Failed to create data directory. Check manually.${NC}"
+        return 1
+    fi
+
+    # Reload and restart the service
+    echo -e "${BLUE}🔄 Reloading systemd and restarting service...${NC}"
+    sudo systemctl daemon-reload
     sudo systemctl start aztec
-    echo -e "${GREEN}✅ Node updated & restarted!${NC}"
+    if sudo systemctl is-active --quiet aztec; then
+        echo -e "${GREEN}✅ Node updated & restarted successfully!"
+        echo -e "${YELLOW}📄 Check logs for confirmation: journalctl -fu aztec${NC}"
+    else
+        echo -e "${RED}❌ Failed to start Aztec node. Check configuration or logs.${NC}"
+        return 1
+    fi
 }
 
 generate_start_command() {
@@ -284,7 +355,7 @@ generate_start_command() {
     echo -e "${GREEN}🟢 Use the following command to run manually:${NC}"
     echo ""
     echo -e "${BLUE}aztec start --node --archiver --sequencer \\"
-    echo "  --network alpha-testnet \\"
+    echo "  --network testnet \\"
     echo "  --l1-rpc-urls $L1_RPC \\"
     echo "  --l1-consensus-host-urls $BEACON_RPC \\"
     echo "  --sequencer.validatorPrivateKeys $PRIVATE_KEY \\"
@@ -292,7 +363,6 @@ generate_start_command() {
     echo -e "  --p2p.p2pIp $PUBLIC_IP${NC}"
     echo ""
 }
-
 
 run_node() {
     clear
@@ -342,7 +412,7 @@ while true; do
     echo -e " 8️⃣  Generate Start Command"
     echo -e " 9️⃣  Exit"
     echo -e "${BLUE}============================================================================${NC}"
-    read -p "👉 Choose option (1-7): " choice
+    read -p "👉 Choose option (1-9): " choice
 
     case $choice in
         1) install_full ;;
