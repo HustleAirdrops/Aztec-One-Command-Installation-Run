@@ -205,9 +205,7 @@ EONG
         fi
     fi
 
-    # Prompt for RPC URLs (not extracted from aztec.service, as per original logic)
-    read -p "🔹 Sepolia L1 RPC URL: " l1_rpc
-    read -p "🔹 Beacon Consensus RPC URL: " beacon_rpc
+
 
     echo -e "${BLUE}📄 Creating systemd service...${NC}"
     sudo tee $AZTEC_SERVICE > /dev/null <<EOF
@@ -220,8 +218,8 @@ User=$USER
 WorkingDirectory=$HOME
 ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequencer \
   --network testnet \
-  --l1-rpc-urls $l1_rpc \
-  --l1-consensus-host-urls $beacon_rpc \
+  --l1-rpc-urls http://38.102.86.215:8545 \
+  --l1-consensus-host-urls http://38.102.86.215:3500 \
   --sequencer.validatorPrivateKeys $private_key \
   --sequencer.coinbase $evm_address \
   --p2p.p2pIp $node_ip'
