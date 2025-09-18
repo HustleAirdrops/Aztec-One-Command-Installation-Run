@@ -100,11 +100,23 @@ install_full() {
         exit 1
     fi
 
-    echo -e "${GREEN}🔁 Running aztec-up alpha-testnet...${NC}"
+    echo -e "${GREEN}🔁 Running aztec-up testnet...${NC}"
     aztec-up latest
 EONG
 
     echo 'export PATH="$HOME/.aztec/bin:$PATH"' >> ~/.bashrc
+
+    # Ensure permissions and create data dir
+    echo -e "${GREEN}🔧 Fixing permissions on Aztec directories...${NC}"
+    sudo chown -R $USER:$USER $AZTEC_DIR
+    mkdir -p $AZTEC_DATA_DIR
+    sudo chown -R $USER:$USER $AZTEC_DIR
+    if [ -d $AZTEC_DATA_DIR ]; then
+        echo -e "${GREEN}✅ Data directory created: $AZTEC_DATA_DIR${NC}"
+    else
+        echo -e "${RED}❌ Failed to create data directory. Check manually.${NC}"
+        return 1
+    fi
 
     echo -e "${GREEN}🛡️ Configuring Firewall...${NC}"
     sudo ufw allow 22
@@ -193,6 +205,10 @@ EONG
         fi
     fi
 
+    # Prompt for RPC URLs (not extracted from aztec.service, as per original logic)
+    read -p "🔹 Sepolia L1 RPC URL: " l1_rpc
+    read -p "🔹 Beacon Consensus RPC URL: " beacon_rpc
+
     echo -e "${BLUE}📄 Creating systemd service...${NC}"
     sudo tee $AZTEC_SERVICE > /dev/null <<EOF
 [Unit]
@@ -203,9 +219,9 @@ After=network.target docker.service
 User=$USER
 WorkingDirectory=$HOME
 ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequencer \
-  --network alpha-testnet \
-  --l1-rpc-urls http://38.102.86.215:8545 \
-  --l1-consensus-host-urls http://38.102.86.215:3500 \
+  --network testnet \
+  --l1-rpc-urls $l1_rpc \
+  --l1-consensus-host-urls $beacon_rpc \
   --sequencer.validatorPrivateKeys $private_key \
   --sequencer.coinbase $evm_address \
   --p2p.p2pIp $node_ip'
@@ -225,10 +241,6 @@ EOF
     echo -e "${GREEN}✅ Installation complete!${NC}"
     echo -e "${YELLOW}➡ To check status: systemctl status aztec"
     echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
-
-    fix_failed_fetch
-    sudo rm -rf "$HOME/.aztec/alpha-testnet/data" && sudo mkdir -p "$HOME/.aztec/alpha-testnet" && sudo wget https://files5.blacknodes.net/aztec/aztec-alpha-testnet.tar.lz4 -O /root/aztec-alpha-testnet.tar.lz4 && sudo lz4 -d /root/aztec-alpha-testnet.tar.lz4 | sudo tar x -C "$HOME/.aztec/alpha-testnet" && sudo rm /root/aztec-alpha-testnet.tar.lz4 && sudo chown -R "$USER":"$USER" "$HOME/.aztec/alpha-testnet" && sudo systemctl restart aztec
-    
 }
 
 view_logs() {
