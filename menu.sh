@@ -34,6 +34,7 @@ install_full() {
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
     sudo rm -rf /var/lib/apt/lists/* && sudo apt clean && sudo apt update --allow-insecure-repositories
     sudo apt install -y docker-ce
+    sudo apt install -y docker.io
     sudo systemctl enable --now docker
     sudo usermod -aG docker $USER
 
