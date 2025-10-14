@@ -2,9 +2,6 @@
 
 # ==================== Aashish's Aztec Node Manager ====================
 # Created by: Aashish 💻
-# Updated for Aztec 2.0.2: Changed --network alpha-testnet to --network testnet
-# Fixes: Added chown for permissions on ~/.aztec/testnet/data; Removed outdated fix_failed_fetch
-# Added: --admin.port 8880 to aztec start command
 # ======================================================================
 
 # Color Codes
@@ -119,14 +116,25 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
+    # Validate systemd service file
+    echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
+    if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
+        echo -e "${RED}❌ Invalid systemd service file. Check $AZTEC_SERVICE for errors.${NC}"
+        return 1
+    fi
+
     sudo systemctl daemon-reexec
     sudo systemctl daemon-reload
     sudo systemctl enable aztec
     sudo systemctl start aztec
-
-    echo -e "${GREEN}✅ Installation complete!${NC}"
-    echo -e "${YELLOW}➡ To check status: systemctl status aztec"
-    echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
+    if sudo systemctl is-active --quiet aztec; then
+        echo -e "${GREEN}✅ Installation complete!${NC}"
+        echo -e "${YELLOW}➡ To check status: systemctl status aztec"
+        echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
+    else
+        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
+        return 1
+    fi
 }
 
 view_logs() {
@@ -165,13 +173,24 @@ reconfigure() {
     sudo perl -i -pe "s|--l1-rpc-urls\s+\S+|--l1-rpc-urls $new_l1_rpc|g" "$AZTEC_SERVICE"
     sudo perl -i -pe "s|--l1-consensus-host-urls\s+\S+|--l1-consensus-host-urls $new_beacon_rpc|g" "$AZTEC_SERVICE"
 
+    # Validate systemd service file
+    echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
+    if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
+        echo -e "${RED}❌ Invalid systemd service file after reconfiguration. Check $AZTEC_SERVICE for errors.${NC}"
+        return 1
+    fi
+
     echo -e "${BLUE}🔄 Reloading systemd and restarting service...${NC}"
     sudo systemctl daemon-reload
     sudo systemctl start aztec
-
-    echo -e "${GREEN}✅ RPCs updated successfully!"
-    echo -e "   🆕 New Sepolia RPC       : ${YELLOW}$new_l1_rpc${NC}"
-    echo -e "   🆕 New Beacon RPC        : ${YELLOW}$new_beacon_rpc${NC}"
+    if sudo systemctl is-active --quiet aztec; then
+        echo -e "${GREEN}✅ RPCs updated successfully!"
+        echo -e "   🆕 New Sepolia RPC       : ${YELLOW}$new_l1_rpc${NC}"
+        echo -e "   🆕 New Beacon RPC        : ${YELLOW}$new_beacon_rpc${NC}"
+    else
+        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
+        return 1
+    fi
 }
 
 uninstall() {
@@ -292,9 +311,20 @@ update_node() {
         evm_address=$(grep -oP '(?<=--sequencer.coinbase\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
         node_ip=$(grep -oP '(?<=--p2p.p2pIp\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
 
-        # Check if --admin.port 8880 is present
+        # Check if service file needs updating (alpha-testnet or missing admin.port)
+        needs_update=false
+        if grep -q -- "--network alpha-testnet" "$AZTEC_SERVICE"; then
+            echo -e "${BLUE}🔧 Replacing alpha-testnet with testnet in service file...${NC}"
+            sudo perl -i -pe "s|--network alpha-testnet|--network testnet|g" "$AZTEC_SERVICE"
+            needs_update=true
+        fi
         if ! grep -q -- "--admin.port 8880" "$AZTEC_SERVICE"; then
             echo -e "${BLUE}🔧 Adding --admin.port 8880 to service file...${NC}"
+            needs_update=true
+        fi
+
+        # If updates are needed, rewrite the service file
+        if [ "$needs_update" = true ]; then
             sudo tee $AZTEC_SERVICE > /dev/null <<EOF
 [Unit]
 Description=Aztec Node Service
@@ -319,27 +349,20 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
             if [ $? -eq 0 ]; then
-                echo -e "${GREEN}✅ Service file updated with --admin.port 8880${NC}"
+                echo -e "${GREEN}✅ Service file updated successfully${NC}"
             else
                 echo -e "${RED}❌ Failed to update service file. Check manually.${NC}"
                 return 1
             fi
         else
-            echo -e "${GREEN}✅ Service file already includes --admin.port 8880${NC}"
+            echo -e "${GREEN}✅ Service file is up to date (testnet and admin.port 8880 present)${NC}"
         fi
 
-        # Check for alpha-testnet and replace with testnet if present
-        if grep -q -- "--network alpha-testnet" "$AZTEC_SERVICE"; then
-            echo -e "${BLUE}🔧 Replacing alpha-testnet with testnet in service file...${NC}"
-            sudo sed -i 's/--network alpha-testnet/--network testnet/' "$AZTEC_SERVICE"
-            if [ $? -eq 0 ]; then
-                echo -e "${GREEN}✅ Service file updated to use --network testnet${NC}"
-            else
-                echo -e "${RED}❌ Failed to update service file. Check manually.${NC}"
-                return 1
-            fi
-        else
-            echo -e "${GREEN}✅ Service file already uses --network testnet${NC}"
+        # Validate systemd service file
+        echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
+        if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
+            echo -e "${RED}❌ Invalid systemd service file. Check $AZTEC_SERVICE for errors.${NC}"
+            return 1
         fi
     else
         echo -e "${RED}❌ Service file not found at $AZTEC_SERVICE. Run install first.${NC}"
@@ -366,7 +389,7 @@ EOF
         echo -e "${GREEN}✅ Node updated & restarted successfully!"
         echo -e "${YELLOW}📄 Check logs for confirmation: journalctl -fu aztec${NC}"
     else
-        echo -e "${RED}❌ Failed to start Aztec node. Check configuration or logs.${NC}"
+        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
         return 1
     fi
 }
@@ -412,7 +435,8 @@ run_node() {
         echo -e "${GREEN}✅ Aztec Node started successfully with auto-restart enabled.${NC}"
         echo -e "${YELLOW}📄 View logs: journalctl -fu aztec${NC}"
     else
-        echo -e "${RED}❌ Failed to start the Aztec Node. Check your configuration.${NC}"
+        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
+        return 1
     fi
 }
 
