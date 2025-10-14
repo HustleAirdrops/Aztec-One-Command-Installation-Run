@@ -4,6 +4,7 @@
 # Created by: Aashish 💻
 # Updated for Aztec 2.0.2: Changed --network alpha-testnet to --network testnet
 # Fixes: Added chown for permissions on ~/.aztec/testnet/data; Removed outdated fix_failed_fetch
+# Added: --admin.port 8880 to aztec start command
 # ======================================================================
 
 # Color Codes
@@ -70,7 +71,7 @@ EONG
     echo -e "${GREEN}🔧 Fixing permissions on Aztec directories...${NC}"
     sudo chown -R $USER:$USER $AZTEC_DIR
     mkdir -p $AZTEC_DATA_DIR
-    chown -R $USER:$USER $AZTEC_DIR
+    sudo chown -R $USER:$USER $AZTEC_DIR
     if [ -d $AZTEC_DATA_DIR ]; then
         echo -e "${GREEN}✅ Data directory created: $AZTEC_DATA_DIR${NC}"
     else
@@ -83,6 +84,7 @@ EONG
     sudo ufw allow ssh
     sudo ufw allow 40400
     sudo ufw allow 8080
+    sudo ufw allow 8880
     sudo ufw --force enable
 
     echo -e "${YELLOW}🔐 Collecting run parameters...${NC}"
@@ -107,7 +109,8 @@ ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequenc
   --l1-consensus-host-urls $beacon_rpc \
   --sequencer.validatorPrivateKeys $private_key \
   --sequencer.coinbase $evm_address \
-  --p2p.p2pIp $node_ip'
+  --p2p.p2pIp $node_ip \
+  --admin.port 8880'
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -124,9 +127,6 @@ EOF
     echo -e "${GREEN}✅ Installation complete!${NC}"
     echo -e "${YELLOW}➡ To check status: systemctl status aztec"
     echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
-
-    # COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots via HTTP; no docker-compose needed)
-    # fix_failed_fetch
 }
 
 view_logs() {
@@ -254,17 +254,6 @@ show_peer_id() {
     read
 }
 
-# COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots; no docker-compose)
-# fix_failed_fetch() {
-#     rm -rf ~/.aztec/testnet/data/archiver
-#     rm -rf ~/.aztec/testnet/data/world-tree
-#     rm -rf ~/.bb-crs
-#     ls ~/.aztec/testnet/data
-#     docker-compose down
-#     rm -rf ./data/archiver ./data/world_state
-#     docker-compose up -d
-# }
-
 update_node() {
     echo -e "${YELLOW}🔄 Updating Aztec Node to latest version...${NC}"
 
@@ -293,8 +282,53 @@ update_node() {
         return 1
     fi
 
+    # Update systemd service file if needed
     echo -e "${YELLOW}🛠️ Checking and updating systemd service file...${NC}"
     if [ -f "$AZTEC_SERVICE" ]; then
+        # Extract existing parameters
+        l1_rpc=$(grep -oP '(?<=--l1-rpc-urls\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
+        beacon_rpc=$(grep -oP '(?<=--l1-consensus-host-urls\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
+        private_key=$(grep -oP '(?<=--sequencer.validatorPrivateKeys\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
+        evm_address=$(grep -oP '(?<=--sequencer.coinbase\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
+        node_ip=$(grep -oP '(?<=--p2p.p2pIp\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
+
+        # Check if --admin.port 8880 is present
+        if ! grep -q -- "--admin.port 8880" "$AZTEC_SERVICE"; then
+            echo -e "${BLUE}🔧 Adding --admin.port 8880 to service file...${NC}"
+            sudo tee $AZTEC_SERVICE > /dev/null <<EOF
+[Unit]
+Description=Aztec Node Service
+After=network.target docker.service
+
+[Service]
+User=$USER
+WorkingDirectory=$HOME
+ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequencer \
+  --network testnet \
+  --l1-rpc-urls $l1_rpc \
+  --l1-consensus-host-urls $beacon_rpc \
+  --sequencer.validatorPrivateKeys $private_key \
+  --sequencer.coinbase $evm_address \
+  --p2p.p2pIp $node_ip \
+  --admin.port 8880'
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✅ Service file updated with --admin.port 8880${NC}"
+            else
+                echo -e "${RED}❌ Failed to update service file. Check manually.${NC}"
+                return 1
+            fi
+        else
+            echo -e "${GREEN}✅ Service file already includes --admin.port 8880${NC}"
+        fi
+
+        # Check for alpha-testnet and replace with testnet if present
         if grep -q -- "--network alpha-testnet" "$AZTEC_SERVICE"; then
             echo -e "${BLUE}🔧 Replacing alpha-testnet with testnet in service file...${NC}"
             sudo sed -i 's/--network alpha-testnet/--network testnet/' "$AZTEC_SERVICE"
@@ -361,7 +395,8 @@ generate_start_command() {
     echo "  --l1-consensus-host-urls $BEACON_RPC \\"
     echo "  --sequencer.validatorPrivateKeys $PRIVATE_KEY \\"
     echo "  --sequencer.coinbase $EVM_ADDRESS \\"
-    echo -e "  --p2p.p2pIp $PUBLIC_IP${NC}"
+    echo "  --p2p.p2pIp $PUBLIC_IP \\"
+    echo -e "  --admin.port 8880${NC}"
     echo ""
 }
 
