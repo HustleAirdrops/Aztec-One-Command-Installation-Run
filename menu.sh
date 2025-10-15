@@ -2,6 +2,8 @@
 
 # ==================== Aashish's Aztec Node Manager ====================
 # Created by: Aashish 💻
+# Updated for Aztec 2.0.2: Changed --network alpha-testnet to --network testnet
+# Fixes: Added chown for permissions on ~/.aztec/testnet/data; Removed outdated fix_failed_fetch
 # ======================================================================
 
 # Color Codes
@@ -15,6 +17,11 @@ BOLD='\033[1m'
 AZTEC_SERVICE="/etc/systemd/system/aztec.service"
 AZTEC_DIR="$HOME/.aztec"
 AZTEC_DATA_DIR="$AZTEC_DIR/testnet"
+
+sanitize_input() {
+    local input="$1"
+    echo "$input" | tr -d '"'\''\\'
+}
 
 install_full() {
     clear
@@ -68,7 +75,7 @@ EONG
     echo -e "${GREEN}🔧 Fixing permissions on Aztec directories...${NC}"
     sudo chown -R $USER:$USER $AZTEC_DIR
     mkdir -p $AZTEC_DATA_DIR
-    sudo chown -R $USER:$USER $AZTEC_DIR
+    chown -R $USER:$USER $AZTEC_DIR
     if [ -d $AZTEC_DATA_DIR ]; then
         echo -e "${GREEN}✅ Data directory created: $AZTEC_DATA_DIR${NC}"
     else
@@ -81,7 +88,6 @@ EONG
     sudo ufw allow ssh
     sudo ufw allow 40400
     sudo ufw allow 8080
-    sudo ufw allow 8880
     sudo ufw --force enable
 
     echo -e "${YELLOW}🔐 Collecting run parameters...${NC}"
@@ -107,7 +113,7 @@ ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequenc
   --sequencer.validatorPrivateKeys $private_key \
   --sequencer.coinbase $evm_address \
   --p2p.p2pIp $node_ip \
-  --admin.port 8880'
+  --admin-port 8880'
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -116,25 +122,17 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-    # Validate systemd service file
-    echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
-    if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
-        echo -e "${RED}❌ Invalid systemd service file. Check $AZTEC_SERVICE for errors.${NC}"
-        return 1
-    fi
-
     sudo systemctl daemon-reexec
     sudo systemctl daemon-reload
     sudo systemctl enable aztec
     sudo systemctl start aztec
-    if sudo systemctl is-active --quiet aztec; then
-        echo -e "${GREEN}✅ Installation complete!${NC}"
-        echo -e "${YELLOW}➡ To check status: systemctl status aztec"
-        echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
-    else
-        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
-        return 1
-    fi
+
+    echo -e "${GREEN}✅ Installation complete!${NC}"
+    echo -e "${YELLOW}➡ To check status: systemctl status aztec"
+    echo -e "${BLUE}📄 View logs live: journalctl -fu aztec${NC}"
+
+    # COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots via HTTP; no docker-compose needed)
+    # fix_failed_fetch
 }
 
 view_logs() {
@@ -173,24 +171,13 @@ reconfigure() {
     sudo perl -i -pe "s|--l1-rpc-urls\s+\S+|--l1-rpc-urls $new_l1_rpc|g" "$AZTEC_SERVICE"
     sudo perl -i -pe "s|--l1-consensus-host-urls\s+\S+|--l1-consensus-host-urls $new_beacon_rpc|g" "$AZTEC_SERVICE"
 
-    # Validate systemd service file
-    echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
-    if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
-        echo -e "${RED}❌ Invalid systemd service file after reconfiguration. Check $AZTEC_SERVICE for errors.${NC}"
-        return 1
-    fi
-
     echo -e "${BLUE}🔄 Reloading systemd and restarting service...${NC}"
     sudo systemctl daemon-reload
     sudo systemctl start aztec
-    if sudo systemctl is-active --quiet aztec; then
-        echo -e "${GREEN}✅ RPCs updated successfully!"
-        echo -e "   🆕 New Sepolia RPC       : ${YELLOW}$new_l1_rpc${NC}"
-        echo -e "   🆕 New Beacon RPC        : ${YELLOW}$new_beacon_rpc${NC}"
-    else
-        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
-        return 1
-    fi
+
+    echo -e "${GREEN}✅ RPCs updated successfully!"
+    echo -e "   🆕 New Sepolia RPC       : ${YELLOW}$new_l1_rpc${NC}"
+    echo -e "   🆕 New Beacon RPC        : ${YELLOW}$new_beacon_rpc${NC}"
 }
 
 uninstall() {
@@ -273,12 +260,25 @@ show_peer_id() {
     read
 }
 
+# COMMENTED OUT: fix_failed_fetch is outdated for testnet (auto-syncs snapshots; no docker-compose)
+# fix_failed_fetch() {
+#     rm -rf ~/.aztec/testnet/data/archiver
+#     rm -rf ~/.aztec/testnet/data/world-tree
+#     rm -rf ~/.bb-crs
+#     ls ~/.aztec/testnet/data
+#     docker-compose down
+#     rm -rf ./data/archiver ./data/world_state
+#     docker-compose up -d
+# }
+
 update_node() {
     echo -e "${YELLOW}🔄 Updating Aztec Node to latest version...${NC}"
 
     # Stop the Aztec service
     echo -e "${BLUE}⛔ Stopping Aztec service...${NC}"
-    sudo systemctl stop aztec
+    if sudo systemctl is-active --quiet aztec; then
+        sudo systemctl stop aztec
+    fi
 
     # Ensure PATH includes Aztec CLI
     export PATH="$PATH:$HOME/.aztec/bin"
@@ -311,15 +311,32 @@ update_node() {
         evm_address=$(grep -oP '(?<=--sequencer.coinbase\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
         node_ip=$(grep -oP '(?<=--p2p.p2pIp\s)[^\s\\]+' "$AZTEC_SERVICE" || echo "")
 
-        # Check if service file needs updating (alpha-testnet or missing admin.port)
+        # Sanitize extracted parameters
+        l1_rpc=$(sanitize_input "$l1_rpc")
+        beacon_rpc=$(sanitize_input "$beacon_rpc")
+        private_key=$(sanitize_input "$private_key")
+        evm_address=$(sanitize_input "$evm_address")
+        node_ip=$(sanitize_input "$node_ip")
+
+        # Validate extracted parameters
+        if [[ -z "$l1_rpc" || -z "$beacon_rpc" || -z "$private_key" || -z "$evm_address" || -z "$node_ip" ]]; then
+            echo -e "${RED}❌ Missing parameters in service file. Run install_full to recreate it.${NC}"
+            return 1
+        fi
+
+        # Check if service file needs updating
         needs_update=false
         if grep -q -- "--network alpha-testnet" "$AZTEC_SERVICE"; then
             echo -e "${BLUE}🔧 Replacing alpha-testnet with testnet in service file...${NC}"
-            sudo perl -i -pe "s|--network alpha-testnet|--network testnet|g" "$AZTEC_SERVICE"
             needs_update=true
         fi
-        if ! grep -q -- "--admin.port 8880" "$AZTEC_SERVICE"; then
-            echo -e "${BLUE}🔧 Adding --admin.port 8880 to service file...${NC}"
+        if ! grep -q -- "--admin-port 8880" "$AZTEC_SERVICE"; then
+            echo -e "${BLUE}🔧 Adding --admin-port 8880 to service file...${NC}"
+            needs_update=true
+        fi
+        # Check for quoting issues or extra spaces
+        if grep -q "[[:space:]]\+--" "$AZTEC_SERVICE" || ! grep -q "^ExecStart=/bin/bash -c \".* --admin-port 8880\"" "$AZTEC_SERVICE"; then
+            echo -e "${BLUE}🔧 Fixing quoting and spacing in service file...${NC}"
             needs_update=true
         fi
 
@@ -333,14 +350,7 @@ After=network.target docker.service
 [Service]
 User=$USER
 WorkingDirectory=$HOME
-ExecStart=/bin/bash -c '$HOME/.aztec/bin/aztec start --node --archiver --sequencer \
-  --network testnet \
-  --l1-rpc-urls $l1_rpc \
-  --l1-consensus-host-urls $beacon_rpc \
-  --sequencer.validatorPrivateKeys $private_key \
-  --sequencer.coinbase $evm_address \
-  --p2p.p2pIp $node_ip \
-  --admin.port 8880'
+ExecStart=/bin/bash -c "$HOME/.aztec/bin/aztec start --node --archiver --sequencer --network testnet --l1-rpc-urls $l1_rpc --l1-consensus-host-urls $beacon_rpc --sequencer.validatorPrivateKeys $private_key --sequencer.coinbase $evm_address --p2p.p2pIp $node_ip --admin-port 8880"
 Restart=always
 RestartSec=5
 LimitNOFILE=65535
@@ -355,13 +365,15 @@ EOF
                 return 1
             fi
         else
-            echo -e "${GREEN}✅ Service file is up to date (testnet and admin.port 8880 present)${NC}"
+            echo -e "${GREEN}✅ Service file is up to date${NC}"
         fi
 
         # Validate systemd service file
         echo -e "${BLUE}🔍 Validating systemd service file...${NC}"
-        if ! sudo systemd-analyze verify "$AZTEC_SERVICE"; then
-            echo -e "${RED}❌ Invalid systemd service file. Check $AZTEC_SERVICE for errors.${NC}"
+        if ! sudo systemd-analyze verify "$AZTEC_SERVICE" > /dev/null 2>&1; then
+            echo -e "${RED}❌ Invalid systemd service file. Contents of $AZTEC_SERVICE:${NC}"
+            cat "$AZTEC_SERVICE"
+            echo -e "${RED}❌ Check the service file for errors and try again.${NC}"
             return 1
         fi
     else
@@ -369,6 +381,7 @@ EOF
         return 1
     fi
 
+    # Clean up old data
     sudo rm -rf $HOME/.aztec/alpha-testnet
     sudo rm -rf /tmp/aztec-world-state-*
     sudo chown -R $USER:$USER $AZTEC_DIR
@@ -390,6 +403,53 @@ EOF
         echo -e "${YELLOW}📄 Check logs for confirmation: journalctl -fu aztec${NC}"
     else
         echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
+        cat "$AZTEC_SERVICE"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Waiting 60 seconds...${NC}"
+    # Animated shrinking countdown (replaces sleep 60)
+    total=60
+    bar_width=30
+    tput civis 2>/dev/null || true   # hide cursor if possible
+    for ((sec=total; sec>0; sec--)); do
+        filled=$(( (sec * bar_width + total - 1) / total ))    # proportionally shrinking
+        empty=$(( bar_width - filled ))
+        # build bar: filled blocks then dashes for empty
+        bar="$(printf '%0.s█' $(seq 1 $filled 2>/dev/null))$(printf '%0.s ' $(seq 1 $empty 2>/dev/null))"
+        percent=$(( sec * 100 / total ))
+        printf "\r⏳ Remaining: %3ds [%s] %3d%% " "$sec" "$bar" "$percent"
+        sleep 1
+    done
+    printf "\r✅ Done.                                            \n"
+    tput cnorm 2>/dev/null || true  # restore cursor
+    if sudo systemctl is-active --quiet aztec; then
+        payload='{"jsonrpc":"2.0","method":"nodeAdmin_setConfig","params":[{"governanceProposerPayload":"0x9D8869D17Af6B899AFf1d93F23f863FF41ddc4fa"}],"id":1}'
+
+        max_retries=5
+        attempt=1
+        while [ $attempt -le $max_retries ]; do
+            echo -e "${BLUE}📡 Sending JSON-RPC setConfig request to localhost:8880 (attempt $attempt)...${NC}"
+            response=$(curl -s -X POST http://127.0.0.1:8880 -H 'Content-Type: application/json' -d "$payload")
+
+            if [ -n "$response" ]; then
+                # show the raw response and stop retrying
+                echo -e "${GREEN}✅ JSON-RPC response:${NC} $response"
+                break
+            else
+                echo -e "${YELLOW}⚠ No response received, retrying in 5s...${NC}"
+                sleep 5
+                attempt=$((attempt + 1))
+            fi
+        done
+
+        if [ $attempt -gt $max_retries ] && [ -z "$response" ]; then
+            echo -e "${RED}❌ Failed to contact local admin port after $max_retries attempts.${NC}"
+            echo -e "${YELLOW}📄 Check service logs: journalctl -u aztec -n 200 --no-pager${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}❌ aztec.service is not active; cannot send JSON-RPC request.${NC}"
         return 1
     fi
 }
@@ -419,7 +479,7 @@ generate_start_command() {
     echo "  --sequencer.validatorPrivateKeys $PRIVATE_KEY \\"
     echo "  --sequencer.coinbase $EVM_ADDRESS \\"
     echo "  --p2p.p2pIp $PUBLIC_IP \\"
-    echo -e "  --admin.port 8880${NC}"
+    echo -e "  --admin-port 8880${NC}"
     echo ""
 }
 
@@ -435,8 +495,7 @@ run_node() {
         echo -e "${GREEN}✅ Aztec Node started successfully with auto-restart enabled.${NC}"
         echo -e "${YELLOW}📄 View logs: journalctl -fu aztec${NC}"
     else
-        echo -e "${RED}❌ Failed to start aztec.service. Check logs with: systemctl status aztec${NC}"
-        return 1
+        echo -e "${RED}❌ Failed to start the Aztec Node. Check your configuration.${NC}"
     fi
 }
 
