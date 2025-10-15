@@ -88,6 +88,7 @@ EONG
     sudo ufw allow ssh
     sudo ufw allow 40400
     sudo ufw allow 8080
+    sudo ufw allow 8880
     sudo ufw --force enable
 
     echo -e "${YELLOW}🔐 Collecting run parameters...${NC}"
