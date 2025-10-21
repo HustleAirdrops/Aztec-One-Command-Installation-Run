@@ -140,7 +140,6 @@ EONG
            [[ -n "$node_ip" && "$node_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             log "INFO" "✅ Successfully extracted parameters from aztec.service"
             echo -e "${GREEN}🔑 Extracted parameters:${NC}"
-            echo -e "${GREEN}  Private Key: $private_key${NC}"
             echo -e "${GREEN}  EVM Address: $evm_address${NC}"
             echo -e "${GREEN}  Node IP: $node_ip${NC}"
         else
