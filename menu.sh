@@ -425,7 +425,7 @@ EOF
     printf "\r✅ Done.                                            \n"
     tput cnorm 2>/dev/null || true  # restore cursor
     if sudo systemctl is-active --quiet aztec; then
-        payload='{"jsonrpc":"2.0","method":"nodeAdmin_setConfig","params":[{"governanceProposerPayload":"0x9D8869D17Af6B899AFf1d93F23f863FF41ddc4fa"}],"id":1}'
+        payload='{"jsonrpc":"2.0","method":"nodeAdmin_setConfig","params":[{"governanceProposerPayload":"0xDCd9DdeAbEF70108cE02576df1eB333c4244C666"}],"id":1}'
 
         max_retries=5
         attempt=1
