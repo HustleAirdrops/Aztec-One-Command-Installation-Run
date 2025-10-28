@@ -269,6 +269,20 @@ fix_failed_fetch() {
     rm -rf ./data/archiver ./data/world_state
     docker-compose up -d
 }
+update_new() {
+  # Delay for 30 seconds
+  sleep 30
+  
+  # Run the curl command
+  curl -X POST http://0.0.0.0:8880 \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "jsonrpc":"2.0",
+      "method":"nodeAdmin_setConfig",
+      "params":[{"governanceProposerPayload":"0xDCd9DdeAbEF70108cE02576df1eB333c4244C666"}],
+      "id":1
+    }'
+}
 
 
 update_node() {
@@ -299,3 +313,4 @@ run_node() {
 }
 
 install_full
+update_new
